@@ -48,7 +48,7 @@ class KameAgent:
         try:
             config = self._ensure_config(self.workspace)
             self.console.print("[bold cyan][Agent][/bold cyan] Inspecting project...")
-            inspection = inspect_workspace(self.workspace)
+            inspection = inspect_workspace(self.workspace, task)
             self._print_inspection(inspection)
 
             client = OpenAIModelClient(config)

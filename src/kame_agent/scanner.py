@@ -33,23 +33,49 @@ CONFIG_FILE_NAMES = {
     "ruff.toml",
 }
 
+MAX_INSPECTION_FILES = 250
+MAX_VISITED_FILES = 5_000
+MAX_SCAN_DEPTH = 6
 
-def inspect_workspace(workspace: Path) -> ProjectInspection:
+TASK_KEYWORD_SUFFIXES = {
+    "python": {".py", ".toml", ".txt", ".md"},
+    "pytest": {".py", ".toml", ".ini"},
+    "test": {".py", ".ts", ".tsx", ".js", ".jsx", ".rs", ".go", ".toml", ".json"},
+    "lint": {".py", ".ts", ".tsx", ".js", ".jsx", ".json", ".toml"},
+    "typescript": {".ts", ".tsx", ".json", ".md"},
+    "readme": {".md", ".rst"},
+    "docs": {".md", ".rst"},
+}
+
+
+def inspect_workspace(workspace: Path, task: str | None = None) -> ProjectInspection:
     root = normalize_workspace(workspace)
     files: list[str] = []
     config_files: list[str] = []
     total_bytes = 0
+    visited_files = 0
+    task_terms = task_keywords(task or "")
     for current_root, dir_names, file_names in os.walk(root):
         dir_names[:] = [name for name in dir_names if name not in EXCLUDED_DIRS]
         current = Path(current_root)
         rel_dir = current.relative_to(root)
         if is_excluded_path(rel_dir):
             continue
+        if len(rel_dir.parts) > MAX_SCAN_DEPTH:
+            dir_names[:] = []
+            continue
         for file_name in sorted(file_names):
+            visited_files += 1
+            if visited_files > MAX_VISITED_FILES:
+                dir_names[:] = []
+                break
             path = current / file_name
             rel = path.relative_to(root)
             rel_str = rel.as_posix()
             if is_secret_path(rel) or is_excluded_path(rel):
+                continue
+            is_config = file_name in CONFIG_FILE_NAMES
+            if not is_config and not is_task_relevant_file(rel_str, task_terms):
                 continue
             try:
                 size = path.stat().st_size
@@ -57,12 +83,15 @@ def inspect_workspace(workspace: Path) -> ProjectInspection:
                 continue
             if size > 512_000 or is_binary_file(path):
                 continue
-            if total_bytes + size > MAX_TOTAL_CONTEXT_BYTES and file_name not in CONFIG_FILE_NAMES:
+            if total_bytes + size > MAX_TOTAL_CONTEXT_BYTES and not is_config:
                 continue
             total_bytes += size
             files.append(rel_str)
-            if file_name in CONFIG_FILE_NAMES:
+            if is_config:
                 config_files.append(rel_str)
+            if len(files) >= MAX_INSPECTION_FILES:
+                dir_names[:] = []
+                break
     detected = detect_project_type(files)
     package_manager = detect_package_manager(files)
     test_commands = infer_test_commands(files, detected)
@@ -78,6 +107,49 @@ def inspect_workspace(workspace: Path) -> ProjectInspection:
         git_status=git_status.stdout.strip() if git_status else None,
         git_diff=git_diff.stdout.strip() if git_diff else None,
     )
+
+
+def task_keywords(task: str) -> set[str]:
+    lowered = task.lower()
+    terms = {part for part in _split_words(lowered) if len(part) >= 3}
+    if any(word in lowered for word in ("作成", "作って", "作る", "新規", "create", "new")):
+        terms.add("create")
+    for keyword in ("readme", "pytest", "python", "typescript", "lint"):
+        if keyword in lowered:
+            terms.add(keyword)
+    if "じゃんけん" in lowered:
+        terms.update({"python", "game"})
+    if "テスト" in lowered:
+        terms.add("test")
+    if "型" in lowered:
+        terms.add("type")
+    return terms
+
+
+def is_task_relevant_file(relative_path: str, terms: set[str]) -> bool:
+    if not terms:
+        return False
+    path = relative_path.lower()
+    suffix = Path(path).suffix
+    name_parts = set(_split_words(path.replace("/", " ")))
+    if terms & name_parts:
+        return True
+    if "readme" in terms and Path(path).name.startswith("readme"):
+        return True
+    if "test" in terms and ("test" in name_parts or "tests" in name_parts):
+        return True
+    if "type" in terms and Path(path).name in {"tsconfig.json", "pyrightconfig.json", "mypy.ini"}:
+        return True
+    for term in terms:
+        suffixes = TASK_KEYWORD_SUFFIXES.get(term)
+        if suffixes and suffix in suffixes:
+            return True
+    return False
+
+
+def _split_words(text: str) -> list[str]:
+    normalized = "".join(char if char.isalnum() else " " for char in text)
+    return normalized.split()
 
 
 def detect_project_type(files: list[str]) -> ProjectType:

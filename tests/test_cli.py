@@ -8,7 +8,7 @@ from pathlib import Path
 from pytest import CaptureFixture, MonkeyPatch
 from rich.console import Console
 
-from kame_agent.cli import _print_banner, main, resolve_cli_workspace
+from kame_agent.cli import _interactive_loop, _print_banner, main, resolve_cli_workspace
 
 
 def test_version_command(capsys: CaptureFixture[str]) -> None:
@@ -58,3 +58,19 @@ def test_banner_can_show_current_model(tmp_path: Path) -> None:
     rendered = output.getvalue()
     assert "Project:" in rendered
     assert "Model: gpt-test" in rendered
+
+
+def test_interactive_loop_ignores_empty_input(monkeypatch: MonkeyPatch) -> None:
+    class DummyAgent:
+        calls = 0
+
+        def run_task(self, _instruction: str) -> int:
+            self.calls += 1
+            return 0
+
+    answers = iter(["", "   ", "exit"])
+    monkeypatch.setattr("rich.prompt.Prompt.ask", lambda *_args, **_kwargs: next(answers))
+    agent = DummyAgent()
+
+    assert _interactive_loop(agent, Console(file=StringIO())) == 0
+    assert agent.calls == 0
