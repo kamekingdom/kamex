@@ -11,6 +11,7 @@ from rich.prompt import Prompt
 
 from kame_agent import __version__
 from kame_agent.agent import KameAgent
+from kame_agent.config import load_config
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -34,7 +35,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     workspace = resolve_cli_workspace(args.workspace)
     instruction = " ".join(args.instruction).strip()
-    _print_banner(console, workspace)
+    interactive = not instruction
+    model = load_config(workspace, args.model).model if interactive else None
+    _print_banner(console, workspace, model)
     agent = KameAgent(workspace=workspace, console=console, model_override=args.model)
     if instruction:
         return agent.run_task(instruction)
@@ -57,10 +60,12 @@ def _interactive_loop(agent: KameAgent, console: Console) -> int:
             return code
 
 
-def _print_banner(console: Console, workspace: Path) -> None:
+def _print_banner(console: Console, workspace: Path, model: str | None = None) -> None:
     banner = "kamex\nOpenAI API based CLI agent"
     console.print(Panel(banner, border_style="cyan"))
     console.print(f"Project: {workspace.resolve()}")
+    if model:
+        console.print(f"Model: {model}")
 
 
 def _is_version_command(instruction: list[str]) -> bool:

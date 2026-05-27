@@ -31,15 +31,24 @@ def _run_parts(
     parts: list[str],
     timeout_seconds: int,
 ) -> CommandResult:
-    completed = subprocess.run(
-        parts,
-        cwd=workspace,
-        text=True,
-        capture_output=True,
-        timeout=timeout_seconds,
-        shell=False,
-        check=False,
-    )
+    try:
+        completed = subprocess.run(
+            parts,
+            cwd=workspace,
+            text=True,
+            capture_output=True,
+            timeout=timeout_seconds,
+            shell=False,
+            check=False,
+            stdin=subprocess.DEVNULL,
+        )
+    except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout if isinstance(exc.stdout, str) else ""
+        stderr = exc.stderr if isinstance(exc.stderr, str) else ""
+        stderr += f"\nCommand timed out after {timeout_seconds} seconds."
+        return CommandResult(command=command, returncode=-1, stdout=stdout, stderr=stderr.strip())
+    except OSError as exc:
+        return CommandResult(command=command, returncode=-1, stdout="", stderr=f"Command failed to start: {exc}")
     return CommandResult(
         command=command,
         returncode=completed.returncode,

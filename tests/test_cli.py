@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+from io import StringIO
 
 from pytest import CaptureFixture, MonkeyPatch
+from rich.console import Console
 
-from kame_agent.cli import main, resolve_cli_workspace
+from kame_agent.cli import _print_banner, main, resolve_cli_workspace
 
 
 def test_version_command(capsys: CaptureFixture[str]) -> None:
@@ -44,3 +46,14 @@ def test_workspace_argument_overrides_current_directory(tmp_path: Path, monkeypa
     target.mkdir()
     monkeypatch.chdir(current)
     assert resolve_cli_workspace(str(target)) == target
+
+
+def test_interactive_banner_can_show_current_model(tmp_path: Path) -> None:
+    output = StringIO()
+    console = Console(file=output, force_terminal=False)
+
+    _print_banner(console, tmp_path, "gpt-test")
+
+    rendered = output.getvalue()
+    assert "Project:" in rendered
+    assert "Model: gpt-test" in rendered
