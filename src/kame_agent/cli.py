@@ -26,6 +26,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("instruction", nargs="*", help="Natural language task to run once.")
     parser.add_argument("--workspace", "-w", help="Target workspace directory. Defaults to the current directory.")
     parser.add_argument("--model", help="Temporarily override the OpenAI model for this run.")
+    parser.add_argument("--no-web-search", action="store_true", help="Disable optional OpenAI API web search.")
     parser.add_argument("--no-update-check", action="store_true", help="Skip GitHub update check on startup.")
     parser.add_argument("--version", action="store_true", help="Show version and exit.")
     return parser
@@ -45,7 +46,12 @@ def main(argv: list[str] | None = None) -> int:
         maybe_offer_update(console, workspace)
     model = load_config(workspace, args.model).model if interactive else None
     _print_banner(console, workspace, model)
-    agent = KameAgent(workspace=workspace, console=console, model_override=args.model)
+    agent = KameAgent(
+        workspace=workspace,
+        console=console,
+        model_override=args.model,
+        web_search_enabled=not args.no_web_search,
+    )
     if instruction:
         return agent.run_task(instruction)
     return _interactive_loop(agent, console)

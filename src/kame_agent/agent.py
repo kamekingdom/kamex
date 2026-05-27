@@ -17,7 +17,7 @@ from kame_agent.diffing import generate_diff
 from kame_agent.exceptions import KameAgentError, SafetyError
 from kame_agent.fs import apply_changes, read_text_file, validate_change
 from kame_agent.llm import OpenAIModelClient
-from kame_agent.models import ChangeProposal, CommandResult, ProjectInspection
+from kame_agent.models import ChangeProposal, CommandResult, ProjectInspection, WebSearchResult
 from kame_agent.safety import command_permission_label, validate_user_approved_command
 from kame_agent.scanner import inspect_workspace
 
@@ -28,10 +28,12 @@ class KameAgent:
         workspace: Path,
         console: Console | None = None,
         model_override: str | None = None,
+        web_search_enabled: bool = True,
     ) -> None:
         self.workspace = workspace
         self.console = console or Console()
         self.model_override = model_override
+        self.web_search_enabled = web_search_enabled
 
     def run_task(self, task: str) -> int:
         try:
@@ -43,11 +45,14 @@ class KameAgent:
             client = OpenAIModelClient(config)
 
             self.console.print("[bold cyan][Agent][/bold cyan] Planning files to read...")
-            files_to_read = client.create_reading_plan(task, inspection)
-            file_context = self._read_files(inspection, files_to_read)
+            reading_plan = client.create_reading_plan(task, inspection)
+            if reading_plan.notes:
+                self.console.print(Panel(Text("\n".join(reading_plan.notes)), title="Reading Plan", border_style="blue"))
+            file_context = self._read_files(inspection, reading_plan.files_to_read)
+            web_context = self._perform_web_searches(client, reading_plan.web_search_queries)
 
             self.console.print("[bold cyan][Agent][/bold cyan] Generating change proposal...")
-            proposal = client.create_change_proposal(task, inspection, file_context)
+            proposal = client.create_change_proposal(task, inspection, file_context, web_context)
             proposal = self._sanitize_proposal(inspection, proposal)
             self._print_proposal(proposal)
 
@@ -85,6 +90,45 @@ class KameAgent:
             read_table.add_row(Text(snapshot.path))
         self.console.print(read_table)
         return context
+
+    def _perform_web_searches(self, client: OpenAIModelClient, queries: list[str]) -> list[WebSearchResult]:
+        if not queries:
+            return []
+        if not self.web_search_enabled:
+            self.console.print("[yellow]Web search was requested by the model but is disabled.[/yellow]")
+            return []
+        table = Table(title="Proposed Web Searches")
+        table.add_column("Query")
+        for query in queries:
+            table.add_row(Text(query))
+        self.console.print(table)
+        if not Confirm.ask("Allow OpenAI API web search for these queries?", default=False):
+            self.console.print("[yellow]Web search skipped.[/yellow]")
+            return []
+        results: list[WebSearchResult] = []
+        for query in queries:
+            self.console.print("[bold cyan][Agent][/bold cyan] Web searching ", Text(query))
+            try:
+                result = client.perform_web_search(query)
+            except KameAgentError as exc:
+                self.console.print(f"[yellow]Web search failed:[/yellow] {exc}")
+                continue
+            results.append(result)
+        self._print_web_search_results(results)
+        return results
+
+    def _print_web_search_results(self, results: list[WebSearchResult]) -> None:
+        if not results:
+            return
+        lines: list[str] = []
+        for result in results:
+            lines.append(f"Query: {result.query}")
+            lines.append(result.summary)
+            if result.sources:
+                lines.append("Sources:")
+                lines.extend(f"- {source}" for source in result.sources)
+            lines.append("")
+        self.console.print(Panel(Text("\n".join(lines).strip()), title="Web Search Results", border_style="blue"))
 
     def _sanitize_proposal(self, inspection: ProjectInspection, proposal: ChangeProposal) -> ChangeProposal:
         for change in proposal.changes:

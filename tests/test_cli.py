@@ -32,6 +32,7 @@ def test_help_mentions_kamex(capsys: CaptureFixture[str]) -> None:
     assert "usage: kamex" in captured.out
     assert "--workspace" in captured.out
     assert "--model" in captured.out
+    assert "--no-web-search" in captured.out
     assert "--no-update-check" in captured.out
 
 

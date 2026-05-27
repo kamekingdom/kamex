@@ -29,6 +29,20 @@ class ProjectInspection:
 
 
 @dataclass(frozen=True)
+class ReadingPlan:
+    files_to_read: list[str]
+    web_search_queries: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class WebSearchResult:
+    query: str
+    summary: str
+    sources: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
 class PlannedChange:
     path: str
     change_type: ChangeType

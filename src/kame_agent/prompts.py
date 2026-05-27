@@ -15,17 +15,20 @@ Do not propose dangerous commands.
 Do not target files outside the workspace.
 Do not display, store, or modify API keys or secrets.
 Assume OpenAI Codex, Codex CLI, Agents SDK, Agent Skills, and MCP are not used.
-The OpenAI API is used only as a model inference interface for natural language understanding and code generation."""
+The OpenAI API is used for model inference and, when explicitly approved by the application/user, the Responses API web_search tool."""
 
 READING_PLAN_PROMPT = """Create a minimal reading plan for the user task.
 Return JSON only:
 {
   "summary": "short plan",
   "files_to_read": ["relative/path"],
+  "web_search_queries": ["search query"],
   "notes": ["short note"]
 }
 
-Use only paths from the provided project file list. Do not include secret-like, generated, dependency, or binary files."""
+Use only paths from the provided project file list. Do not include secret-like, generated, dependency, or binary files.
+Only include web_search_queries when current external information is genuinely useful, such as current library APIs, recent framework changes, public documentation, error messages from unknown tools, or time-sensitive implementation details.
+Do not request web searches for ordinary local edits that can be solved from the workspace."""
 
 PROPOSAL_PROMPT = """Create a safe code change proposal for the user task.
 Return JSON only in this exact shape:
@@ -52,3 +55,8 @@ Rules:
 - If no safe change is possible, return an empty changes array and explain in notes.
 - Commands must be inspection commands only, such as tests, lint, typecheck, or git diff/status.
 - Do not include shell operators, install commands, publish commands, destructive commands, or network commands."""
+
+WEB_SEARCH_PROMPT = """Use web search to answer this implementation research query for a coding agent.
+Return a concise summary with source URLs or citation markers when available.
+Focus on facts needed to complete the user's coding task.
+Do not include secrets or instructions to access private resources."""

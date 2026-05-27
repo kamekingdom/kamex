@@ -5,8 +5,8 @@
 本システムは、OpenAI APIを利用して独自に実装したコーディング支援エージェントです。
 OpenAI Codex、Codex CLI、Agents SDK、Agent Skills、およびMCP（Model Context Protocol）は使用していません。
 
-モデルへの入力、ツール呼び出し、ファイル操作、コマンド実行、差分生成、承認フローは、すべて本システム側で独自に実装・制御しています。
-OpenAI APIは、自然言語処理およびコード生成のためのモデル推論機能としてのみ利用しています。
+モデルへの入力、ファイル操作、コマンド実行、差分生成、承認フローは、すべて本システム側で独自に実装・制御しています。
+OpenAI APIは、自然言語処理およびコード生成のためのモデル推論機能として利用します。必要な場合のみ、ユーザー承認後にOpenAI Responses APIの `web_search` tool を利用してWeb検索も行います。
 
 ## 技術スタック
 
@@ -194,6 +194,14 @@ export KAMEX_UPDATE_URL="https://api.github.com/repos/kamekingdom/kamex/releases
 export KAMEX_UPDATE_INSTALL_SPEC="git+https://github.com/kamekingdom/kamex.git"
 ```
 
+Web検索を無効化:
+
+```bash
+kamex --no-web-search
+```
+
+モデルが「現在のライブラリ仕様」「最新ドキュメント」「未知のエラー」など外部情報が必要だと判断した場合、kamexは検索クエリをCLIに表示します。ユーザーが承認した場合のみ、OpenAI APIのWeb検索を実行し、その結果を変更案生成に渡します。
+
 ## 動作フロー
 
 1. ユーザー指示を受け取る
@@ -201,14 +209,15 @@ export KAMEX_UPDATE_INSTALL_SPEC="git+https://github.com/kamekingdom/kamex.git"
 3. APIキーが未設定ならCLI UI上で入力を受け取り保存する
 4. workspaceを調査する
 5. 言語、パッケージマネージャ、テスト候補を推定する
-6. OpenAI APIに読むべきファイルの計画をJSONで生成させる
+6. OpenAI APIに読むべきファイルと必要なWeb検索クエリの計画をJSONで生成させる
 7. 安全ポリシーを通過したファイルだけを読む
-8. OpenAI APIに構造化された変更案JSONを生成させる
-9. アプリ側で変更案を検証してdiffを生成する
-10. CLIにdiffを表示する
-11. ユーザー承認後にのみファイルへ適用する
-12. 提案されたコマンドを表示し、安全ポリシー確認後、ユーザー承認後にのみ実行する
-13. 結果を要約する
+8. Web検索が必要な場合、検索クエリを表示してユーザー承認後にOpenAI APIで検索する
+9. OpenAI APIに構造化された変更案JSONを生成させる
+10. アプリ側で変更案を検証してdiffを生成する
+11. CLIにdiffを表示する
+12. ユーザー承認後にのみファイルへ適用する
+13. 提案されたコマンドを表示し、安全ポリシー確認後、ユーザー承認後にのみ実行する
+14. 結果を要約する
 
 ## 安全設計
 
@@ -221,6 +230,8 @@ export KAMEX_UPDATE_INSTALL_SPEC="git+https://github.com/kamekingdom/kamex.git"
 - 巨大ファイルとバイナリファイルを読み込み対象から除外
 - `.env`, `.env.local`, `id_rsa`, `id_ed25519`, `*.pem`, `*.key`, `credentials.json` を秘密情報として除外
 - LLMの変更案は `create` / `modify` と変更後全文のJSONだけを受け付ける
+- Web検索クエリはCLI上に表示し、ユーザー承認後にのみOpenAI APIで実行
+- `--no-web-search` でWeb検索を完全に無効化可能
 - `modify` は既存ファイルのみ許可
 - `create` は未存在ファイルのみ許可
 - diff表示とユーザー承認前には書き込みを行わない
@@ -279,6 +290,7 @@ python -m pytest
 - shell制御演算子を含むコマンドが拒否される
 - 検査系コマンドと、一回限りで承認されたコマンドのみ実行できる
 - 入力待ちや長時間実行になったコマンドでもCLIがクラッシュせず対話モードへ戻る
+- Web検索が必要な場合だけ、ユーザー承認後にOpenAI APIで検索できる
 - 変更案からdiffを生成できる
 - ユーザー承認前にファイルが変更されない
 - 承認後にのみ変更が適用される
