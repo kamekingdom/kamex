@@ -12,6 +12,7 @@ from kame_agent.fs import read_text_file
 from kame_agent.safety import (
     command_permission_label,
     ensure_readable_text_file,
+    parse_command,
     validate_command,
     validate_user_approved_command,
 )
@@ -127,3 +128,10 @@ def test_user_approved_command_still_rejects_shell_control_commands(command: str
 )
 def test_command_permission_label(command: str, label: str) -> None:
     assert command_permission_label(command) == label
+
+
+def test_parse_command_strips_outer_quotes_from_executable_path() -> None:
+    parts = parse_command('"C:\\Program Files\\Python\\python.exe" -m pip --version')
+
+    assert parts[0] == "C:\\Program Files\\Python\\python.exe"
+    assert parts[1:] == ["-m", "pip", "--version"]

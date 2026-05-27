@@ -152,6 +152,7 @@ def parse_command(command: str) -> list[str]:
         parts = shlex.split(command, posix=(os.name != "nt"))
     except ValueError as exc:
         raise SafetyError(f"Invalid command syntax: {command}") from exc
+    parts = [_strip_outer_quotes(part) for part in parts]
     if not parts:
         raise SafetyError("Empty command is not allowed")
     return parts
@@ -160,6 +161,12 @@ def parse_command(command: str) -> list[str]:
 def _starts_with(parts: list[str], prefix: tuple[str, ...]) -> bool:
     lowered = [part.lower() for part in parts]
     return tuple(lowered[: len(prefix)]) == prefix
+
+
+def _strip_outer_quotes(value: str) -> str:
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        return value[1:-1]
+    return value
 
 
 def validate_command(command: str) -> list[str]:

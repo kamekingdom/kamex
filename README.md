@@ -89,6 +89,8 @@ workspaceの `.env` も読み込みます。ただし `.env` や鍵ファイル�
 
 `--workspace` を指定しない場合、`kamex` はコマンドを実行したカレントディレクトリ、つまり Python の `Path.cwd()` をデフォルトworkspaceとして扱います。`--workspace <path>` を指定した場合のみ、そのパスをworkspaceとして調査・編集します。
 
+起動時にはGitHub Releasesの最新バージョンを確認します。現在のバージョンより新しいものが見つかった場合、CLI上で更新するか確認し、承認されたときだけ `python -m pip install --upgrade git+https://github.com/kamekingdom/kamex.git` を実行します。確認に失敗した場合でも起動は止まりません。
+
 ヘルプ:
 
 ```bash
@@ -140,20 +142,35 @@ kamex version
 kamex --version
 ```
 
+更新チェックをスキップ:
+
+```bash
+kamex --no-update-check
+```
+
+環境変数でも制御できます。
+
+```bash
+export KAMEX_DISABLE_UPDATE_CHECK=1
+export KAMEX_UPDATE_URL="https://api.github.com/repos/kamekingdom/kamex/releases/latest"
+export KAMEX_UPDATE_INSTALL_SPEC="git+https://github.com/kamekingdom/kamex.git"
+```
+
 ## 動作フロー
 
 1. ユーザー指示を受け取る
-2. APIキーが未設定ならCLI UI上で入力を受け取り保存する
-3. workspaceを調査する
-4. 言語、パッケージマネージャ、テスト候補を推定する
-5. OpenAI APIに読むべきファイルの計画をJSONで生成させる
-6. 安全ポリシーを通過したファイルだけを読む
-7. OpenAI APIに構造化された変更案JSONを生成させる
-8. アプリ側で変更案を検証してdiffを生成する
-9. CLIにdiffを表示する
-10. ユーザー承認後にのみファイルへ適用する
-11. 提案されたコマンドを表示し、安全ポリシー確認後、ユーザー承認後にのみ実行する
-12. 結果を要約する
+2. GitHub上に新しいバージョンがあれば更新確認を表示する
+3. APIキーが未設定ならCLI UI上で入力を受け取り保存する
+4. workspaceを調査する
+5. 言語、パッケージマネージャ、テスト候補を推定する
+6. OpenAI APIに読むべきファイルの計画をJSONで生成させる
+7. 安全ポリシーを通過したファイルだけを読む
+8. OpenAI APIに構造化された変更案JSONを生成させる
+9. アプリ側で変更案を検証してdiffを生成する
+10. CLIにdiffを表示する
+11. ユーザー承認後にのみファイルへ適用する
+12. 提案されたコマンドを表示し、安全ポリシー確認後、ユーザー承認後にのみ実行する
+13. 結果を要約する
 
 ## 安全設計
 
