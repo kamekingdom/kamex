@@ -45,6 +45,44 @@ OpenAI APIは、自然言語処理およびコード生成のためのモデル�
 
 ## インストール
 
+GitHubからcloneした直後に `kamex` コマンドを登録する場合:
+
+macOS / Linux:
+
+```bash
+git clone https://github.com/kamekingdom/kamex.git
+cd kamex
+python3 scripts/install_kamex.py
+kamex --help
+```
+
+Windows PowerShell:
+
+```powershell
+git clone https://github.com/kamekingdom/kamex.git
+cd kamex
+python scripts\install_kamex.py
+kamex --help
+```
+
+ショートカットスクリプトも用意しています。
+
+```bash
+./install.sh
+```
+
+```powershell
+.\install.ps1
+```
+
+```cmd
+install.bat
+```
+
+`scripts/install_kamex.py` は、仮想環境内ではその環境へ、仮想環境外では `python -m pip install --user -e .` 相当でユーザー環境へeditable installします。`kamex` の配置先がPATHに無い場合は、追加すべきディレクトリを表示します。
+
+開発用に仮想環境へ入れる場合:
+
 ```bash
 python -m venv .venv
 source .venv/bin/activate
