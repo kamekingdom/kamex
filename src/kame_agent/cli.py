@@ -27,7 +27,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--workspace", "-w", help="Target workspace directory. Defaults to the current directory.")
     parser.add_argument("--model", help="Temporarily override the OpenAI model for this run.")
     parser.add_argument("--no-web-search", action="store_true", help="Disable optional OpenAI API web search.")
-    parser.add_argument("--no-update-check", action="store_true", help="Skip GitHub update check on startup.")
     parser.add_argument("--version", action="store_true", help="Show version and exit.")
     return parser
 
@@ -40,11 +39,11 @@ def main(argv: list[str] | None = None) -> int:
         console.print(f"kamex {__version__}")
         return 0
     workspace = resolve_cli_workspace(args.workspace)
-    instruction = " ".join(args.instruction).strip()
-    interactive = not instruction
-    if not args.no_update_check:
+    if _is_update_command(args.instruction):
         maybe_offer_update(console, workspace)
-    model = load_config(workspace, args.model).model if interactive else None
+        return 0
+    instruction = " ".join(args.instruction).strip()
+    model = load_config(workspace, args.model).model
     _print_banner(console, workspace, model)
     agent = KameAgent(
         workspace=workspace,
@@ -83,6 +82,10 @@ def _print_banner(console: Console, workspace: Path, model: str | None = None) -
 
 def _is_version_command(instruction: list[str]) -> bool:
     return len(instruction) == 1 and instruction[0].lower() == "version"
+
+
+def _is_update_command(instruction: list[str]) -> bool:
+    return len(instruction) == 1 and instruction[0].lower() == "update"
 
 
 def resolve_cli_workspace(workspace_arg: str | None) -> Path:

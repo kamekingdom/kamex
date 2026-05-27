@@ -9,7 +9,16 @@ from openai import OpenAI, OpenAIError
 
 from kame_agent.config import AppConfig
 from kame_agent.exceptions import LLMError, ProposalError
-from kame_agent.models import ChangeProposal, PlannedChange, ProjectInspection, ProjectType, ReadingPlan, WebSearchResult
+from kame_agent.models import (
+    ChangeProposal,
+    PlannedChange,
+    ProjectInspection,
+    ProjectType,
+    ReadingPlan,
+    TokenUsage,
+    WebSearchResult,
+    add_token_usage,
+)
 from kame_agent.prompts import PROPOSAL_PROMPT, READING_PLAN_PROMPT, SYSTEM_PROMPT, WEB_SEARCH_PROMPT
 
 
@@ -19,6 +28,11 @@ class OpenAIModelClient:
             raise LLMError("OPENAI_API_KEY is not set.")
         self._client = OpenAI(api_key=config.api_key)
         self._model = config.model
+        self._token_usage = TokenUsage()
+
+    @property
+    def token_usage(self) -> TokenUsage:
+        return self._token_usage
 
     def create_reading_plan(self, task: str, inspection: ProjectInspection) -> ReadingPlan:
         payload = {
@@ -50,6 +64,7 @@ class OpenAIModelClient:
             )
         except OpenAIError as exc:
             raise LLMError(f"OpenAI API web search failed: {exc}") from exc
+        self._record_token_usage(response)
         output = getattr(response, "output_text", "")
         if not isinstance(output, str) or not output.strip():
             raise LLMError("OpenAI API web search response did not contain output_text.")
@@ -93,10 +108,14 @@ class OpenAIModelClient:
             )
         except OpenAIError as exc:
             raise LLMError(f"OpenAI API request failed: {exc}") from exc
+        self._record_token_usage(response)
         output = getattr(response, "output_text", "")
         if not isinstance(output, str) or not output.strip():
             raise LLMError("OpenAI API response did not contain output_text.")
         return parse_json_object(output)
+
+    def _record_token_usage(self, response: Any) -> None:
+        self._token_usage = add_token_usage(self._token_usage, extract_token_usage(response))
 
 
 def parse_reading_plan(data: dict[str, Any]) -> ReadingPlan:
@@ -135,6 +154,41 @@ def extract_web_sources(response: Any) -> list[str]:
         if isinstance(url, str) and url not in sources:
             sources.append(url)
     return sources[:20]
+
+
+def extract_token_usage(response: Any) -> TokenUsage:
+    data = _response_to_dict(response)
+    usage = _find_usage(data)
+    if not usage:
+        return TokenUsage()
+    input_tokens = _int_field(usage, "input_tokens") or _int_field(usage, "prompt_tokens")
+    output_tokens = _int_field(usage, "output_tokens") or _int_field(usage, "completion_tokens")
+    total_tokens = _int_field(usage, "total_tokens")
+    if total_tokens == 0:
+        total_tokens = input_tokens + output_tokens
+    return TokenUsage(input_tokens=input_tokens, output_tokens=output_tokens, total_tokens=total_tokens)
+
+
+def _find_usage(value: Any) -> dict[str, Any] | None:
+    if isinstance(value, dict):
+        usage = value.get("usage")
+        if isinstance(usage, dict):
+            return usage
+        for child in value.values():
+            found = _find_usage(child)
+            if found is not None:
+                return found
+    if isinstance(value, list):
+        for child in value:
+            found = _find_usage(child)
+            if found is not None:
+                return found
+    return None
+
+
+def _int_field(data: dict[str, Any], key: str) -> int:
+    value = data.get(key)
+    return value if isinstance(value, int) else 0
 
 
 def _response_to_dict(response: Any) -> dict[str, Any]:

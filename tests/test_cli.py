@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from io import StringIO
+from pathlib import Path
 
 from pytest import CaptureFixture, MonkeyPatch
 from rich.console import Console
@@ -33,7 +33,6 @@ def test_help_mentions_kamex(capsys: CaptureFixture[str]) -> None:
     assert "--workspace" in captured.out
     assert "--model" in captured.out
     assert "--no-web-search" in captured.out
-    assert "--no-update-check" in captured.out
 
 
 def test_default_workspace_is_current_directory(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
@@ -50,7 +49,7 @@ def test_workspace_argument_overrides_current_directory(tmp_path: Path, monkeypa
     assert resolve_cli_workspace(str(target)) == target
 
 
-def test_interactive_banner_can_show_current_model(tmp_path: Path) -> None:
+def test_banner_can_show_current_model(tmp_path: Path) -> None:
     output = StringIO()
     console = Console(file=output, force_terminal=False)
 

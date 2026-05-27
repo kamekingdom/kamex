@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from kame_agent.llm import extract_web_sources, parse_reading_plan
+from kame_agent.llm import extract_token_usage, extract_web_sources, parse_reading_plan
 
 
 def test_parse_reading_plan_supports_web_search_queries() -> None:
@@ -44,3 +44,23 @@ def test_extract_web_sources_from_response_dict() -> None:
     }
 
     assert extract_web_sources(response) == ["https://example.test/a", "https://example.test/b"]
+
+
+def test_extract_token_usage_from_responses_usage() -> None:
+    response = {"usage": {"input_tokens": 12, "output_tokens": 8, "total_tokens": 20}}
+
+    usage = extract_token_usage(response)
+
+    assert usage.input_tokens == 12
+    assert usage.output_tokens == 8
+    assert usage.total_tokens == 20
+
+
+def test_extract_token_usage_from_prompt_completion_usage() -> None:
+    response = {"usage": {"prompt_tokens": 5, "completion_tokens": 7}}
+
+    usage = extract_token_usage(response)
+
+    assert usage.input_tokens == 5
+    assert usage.output_tokens == 7
+    assert usage.total_tokens == 12
