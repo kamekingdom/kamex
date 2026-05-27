@@ -47,6 +47,16 @@ TASK_KEYWORD_SUFFIXES = {
     "docs": {".md", ".rst"},
 }
 
+KNOWN_TASK_KEYWORDS = {
+    "python",
+    "pytest",
+    "test",
+    "lint",
+    "typescript",
+    "readme",
+    "docs",
+}
+
 
 def inspect_workspace(workspace: Path, task: str | None = None) -> ProjectInspection:
     root = normalize_workspace(workspace)
@@ -74,7 +84,9 @@ def inspect_workspace(workspace: Path, task: str | None = None) -> ProjectInspec
             rel_str = rel.as_posix()
             if is_secret_path(rel) or is_excluded_path(rel):
                 continue
-            is_config = file_name in CONFIG_FILE_NAMES
+            is_config = file_name in CONFIG_FILE_NAMES and (
+                len(rel.parts) <= 2 or is_task_relevant_file(rel_str, task_terms)
+            )
             if not is_config and not is_task_relevant_file(rel_str, task_terms):
                 continue
             try:
@@ -111,7 +123,8 @@ def inspect_workspace(workspace: Path, task: str | None = None) -> ProjectInspec
 
 def task_keywords(task: str) -> set[str]:
     lowered = task.lower()
-    terms = {part for part in _split_words(lowered) if len(part) >= 3}
+    words = {part for part in _split_words(lowered) if len(part) >= 3}
+    terms = words & KNOWN_TASK_KEYWORDS
     if any(word in lowered for word in ("作成", "作って", "作る", "新規", "create", "new")):
         terms.add("create")
     for keyword in ("readme", "pytest", "python", "typescript", "lint"):

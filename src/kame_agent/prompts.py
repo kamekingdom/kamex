@@ -27,6 +27,7 @@ Return JSON only:
 }
 
 Use only paths from the provided project file list. Do not include secret-like, generated, dependency, or binary files.
+If the task asks for instructions, operational steps, command guidance, SSH/SCP/SFTP transfer help, troubleshooting, or an explanation, and it does not explicitly ask to edit files, return an empty files_to_read array and put the answer direction in notes.
 Only include web_search_queries when current external information is genuinely useful, such as current library APIs, recent framework changes, public documentation, error messages from unknown tools, or time-sensitive implementation details.
 Do not request web searches for ordinary local edits that can be solved from the workspace."""
 
@@ -53,6 +54,8 @@ Rules:
 - For create, include the full new file content.
 - Keep changes small and directly related to the task.
 - If no safe change is possible, return an empty changes array and explain in notes.
+- If the task asks for instructions, operational steps, command guidance, SSH/SCP/SFTP transfer help, troubleshooting, or an explanation, and it does not explicitly ask to edit files, return an empty changes array.
+- Do not update README, docs, scripts, or other files merely to provide instructions. Put those instructions in summary, reasoning_summary, and notes instead.
 - Commands must be inspection commands only, such as tests, lint, typecheck, or git diff/status.
 - Do not include shell operators, install commands, publish commands, destructive commands, or network commands."""
 
