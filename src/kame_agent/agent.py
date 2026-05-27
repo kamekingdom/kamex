@@ -17,9 +17,18 @@ from kame_agent.diffing import generate_diff
 from kame_agent.exceptions import KameAgentError, SafetyError
 from kame_agent.fs import apply_changes, read_text_file, validate_change
 from kame_agent.llm import OpenAIModelClient
-from kame_agent.models import ChangeProposal, CommandResult, ProjectInspection, TokenUsage, WebSearchResult
+from kame_agent.models import (
+    ChangeProposal,
+    CommandResult,
+    ProjectInspection,
+    TokenUsage,
+    UsageCost,
+    UsageTotals,
+    WebSearchResult,
+)
 from kame_agent.safety import command_permission_label, validate_user_approved_command
 from kame_agent.scanner import inspect_workspace
+from kame_agent.usage import append_usage_history, estimate_usage_cost, read_usage_totals
 
 
 class KameAgent:
@@ -72,7 +81,7 @@ class KameAgent:
                 self.console.print("[yellow]No changes were applied.[/yellow]")
 
             self._handle_commands(inspection, proposal.commands_to_run)
-            self._print_summary(proposal, client.token_usage)
+            self._print_summary(proposal, client.token_usage, config.model)
             return 0
         except KameAgentError as exc:
             self.console.print(f"[bold red]Error:[/bold red] {exc}")
@@ -235,19 +244,40 @@ class KameAgent:
         style = "green" if result.returncode == 0 else "red"
         self.console.print(Panel(Text(body), title=Text(result.command), border_style=style))
 
-    def _print_summary(self, proposal: ChangeProposal, token_usage: TokenUsage) -> None:
+    def _print_summary(self, proposal: ChangeProposal, token_usage: TokenUsage, model: str) -> None:
         lines = [proposal.summary or "Task completed."]
         if proposal.changes:
             lines.append("Changed files:")
             lines.extend(f"- {change.path}" for change in proposal.changes)
         self.console.print(Panel(Text("\n".join(lines)), title="Final Summary", border_style="green"))
-        self._print_token_usage(token_usage)
+        cost = estimate_usage_cost(model, token_usage)
+        history_path = append_usage_history(model, token_usage, cost, self.workspace)
+        totals = read_usage_totals(history_path)
+        self._print_token_usage(token_usage, model, cost, totals, history_path)
 
-    def _print_token_usage(self, token_usage: TokenUsage) -> None:
+    def _print_token_usage(
+        self,
+        token_usage: TokenUsage,
+        model: str,
+        cost: UsageCost,
+        totals: UsageTotals,
+        history_path: Path,
+    ) -> None:
         table = Table(title="Token Usage")
-        table.add_column("Kind")
-        table.add_column("Tokens", justify="right")
-        table.add_row("Input", str(token_usage.input_tokens))
-        table.add_row("Output", str(token_usage.output_tokens))
-        table.add_row("Total", str(token_usage.total_tokens))
+        table.add_column("Item")
+        table.add_column("Current", justify="right")
+        table.add_column("All Time", justify="right")
+        table.add_row("Model", model, "-")
+        table.add_row("Runs", "1", str(totals.runs))
+        table.add_row("Input tokens", str(token_usage.input_tokens), str(totals.input_tokens))
+        table.add_row("Output tokens", str(token_usage.output_tokens), str(totals.output_tokens))
+        table.add_row("Total tokens", str(token_usage.total_tokens), str(totals.total_tokens))
+        table.add_row("Estimated cost", _format_cost(cost.total_cost_usd), _format_cost(totals.total_cost_usd))
+        table.add_row("History", str(history_path), "-")
         self.console.print(table)
+
+
+def _format_cost(value: float | None) -> str:
+    if value is None:
+        return "unknown"
+    return f"${value:.6f}"

@@ -75,6 +75,22 @@ class TokenUsage:
     total_tokens: int = 0
 
 
+@dataclass(frozen=True)
+class UsageCost:
+    input_cost_usd: float | None
+    output_cost_usd: float | None
+    total_cost_usd: float | None
+
+
+@dataclass(frozen=True)
+class UsageTotals:
+    runs: int
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+    total_cost_usd: float | None
+
+
 def add_token_usage(left: TokenUsage, right: TokenUsage) -> TokenUsage:
     return TokenUsage(
         input_tokens=left.input_tokens + right.input_tokens,
