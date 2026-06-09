@@ -9,7 +9,6 @@ from kame_agent.commands import run_auto_command
 from kame_agent.models import ProjectInspection, ProjectType
 from kame_agent.safety import (
     EXCLUDED_DIRS,
-    MAX_TOTAL_CONTEXT_BYTES,
     is_binary_file,
     is_excluded_path,
     is_secret_path,
@@ -60,9 +59,8 @@ KNOWN_TASK_KEYWORDS = {
 
 def inspect_workspace(workspace: Path, task: str | None = None) -> ProjectInspection:
     root = normalize_workspace(workspace)
-    files: list[str] = []
+    candidates: list[tuple[int, str]] = []
     config_files: list[str] = []
-    total_bytes = 0
     visited_files = 0
     task_terms = task_keywords(task or "")
     for current_root, dir_names, file_names in os.walk(root):
@@ -87,23 +85,17 @@ def inspect_workspace(workspace: Path, task: str | None = None) -> ProjectInspec
             is_config = file_name in CONFIG_FILE_NAMES and (
                 len(rel.parts) <= 2 or is_task_relevant_file(rel_str, task_terms)
             )
-            if not is_config and not is_task_relevant_file(rel_str, task_terms):
-                continue
             try:
                 size = path.stat().st_size
             except OSError:
                 continue
             if size > 512_000 or is_binary_file(path):
                 continue
-            if total_bytes + size > MAX_TOTAL_CONTEXT_BYTES and not is_config:
-                continue
-            total_bytes += size
-            files.append(rel_str)
+            priority = file_priority(rel_str, is_config, task_terms)
+            candidates.append((priority, rel_str))
             if is_config:
                 config_files.append(rel_str)
-            if len(files) >= MAX_INSPECTION_FILES:
-                dir_names[:] = []
-                break
+    files = [path for _priority, path in sorted(candidates)[:MAX_INSPECTION_FILES]]
     detected = detect_project_type(files)
     package_manager = detect_package_manager(files)
     test_commands = infer_test_commands(files, detected)
@@ -111,7 +103,7 @@ def inspect_workspace(workspace: Path, task: str | None = None) -> ProjectInspec
     git_diff = run_auto_command(root, "git diff --stat")
     return ProjectInspection(
         workspace=root,
-        files=sorted(files),
+        files=files,
         config_files=sorted(config_files),
         detected_project_type=detected,
         package_manager=package_manager,
@@ -119,6 +111,14 @@ def inspect_workspace(workspace: Path, task: str | None = None) -> ProjectInspec
         git_status=git_status.stdout.strip() if git_status else None,
         git_diff=git_diff.stdout.strip() if git_diff else None,
     )
+
+
+def file_priority(relative_path: str, is_config: bool, terms: set[str]) -> int:
+    if is_config:
+        return 0
+    if is_task_relevant_file(relative_path, terms):
+        return 1
+    return 2
 
 
 def task_keywords(task: str) -> set[str]:

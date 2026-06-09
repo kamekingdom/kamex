@@ -22,24 +22,37 @@ def test_task_relevant_file_matches_prompt_terms() -> None:
     assert not is_task_relevant_file("unrelated.log", terms)
 
 
-def test_inspect_workspace_filters_unrelated_files_by_task(tmp_path: Path) -> None:
+def test_inspect_workspace_includes_files_under_current_workspace(tmp_path: Path) -> None:
     (tmp_path / "README.md").write_text("# Project\n", encoding="utf-8")
     (tmp_path / "notes.txt").write_text("notes\n", encoding="utf-8")
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "app.py").write_text("print('hello')\n", encoding="utf-8")
 
-    inspection = inspect_workspace(tmp_path, "READMEを更新して")
+    inspection = inspect_workspace(tmp_path, "このディレクトリの実装を確認して")
 
     assert "README.md" in inspection.files
-    assert "notes.txt" not in inspection.files
-    assert "src/app.py" not in inspection.files
+    assert "notes.txt" in inspection.files
+    assert "src/app.py" in inspection.files
 
 
-def test_inspect_workspace_keeps_config_files_even_when_unrelated(tmp_path: Path) -> None:
+def test_inspect_workspace_prioritizes_relevant_files_and_configs(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text("[project]\nname='x'\n", encoding="utf-8")
-    (tmp_path / "random.txt").write_text("x\n", encoding="utf-8")
+    (tmp_path / "random.css").write_text("body {}\n", encoding="utf-8")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("print('hello')\n", encoding="utf-8")
 
-    inspection = inspect_workspace(tmp_path, "READMEを更新して")
+    inspection = inspect_workspace(tmp_path, "pythonを確認して")
 
-    assert "pyproject.toml" in inspection.files
-    assert "random.txt" not in inspection.files
+    assert inspection.files.index("pyproject.toml") < inspection.files.index("random.css")
+    assert inspection.files.index("src/app.py") < inspection.files.index("random.css")
+
+
+def test_inspect_workspace_excludes_secret_files_in_subdirectories(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / ".env").write_text("OPENAI_API_KEY=x\n", encoding="utf-8")
+    (tmp_path / "src" / "app.py").write_text("print('hello')\n", encoding="utf-8")
+
+    inspection = inspect_workspace(tmp_path, "このディレクトリを確認して")
+
+    assert "src/app.py" in inspection.files
+    assert "src/.env" not in inspection.files
