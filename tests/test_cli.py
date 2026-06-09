@@ -33,6 +33,7 @@ def test_help_mentions_kamex(capsys: CaptureFixture[str]) -> None:
     assert "--workspace" in captured.out
     assert "--model" in captured.out
     assert "--no-web-search" in captured.out
+    assert "--max-turns" in captured.out
 
 
 def test_default_workspace_is_current_directory(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:

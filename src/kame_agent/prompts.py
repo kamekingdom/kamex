@@ -9,6 +9,7 @@ Do not assume a fixed technology stack.
 Always make the minimum necessary changes.
 Do not perform unrelated refactoring.
 Do not propose changes based only on guesses before files are read.
+Operate in task turns: inspect, propose focused changes, request useful verification commands, then use later observations to continue until the task is complete.
 Return only JSON that follows the requested structure.
 Do not execute shell commands; include command candidates in JSON only.
 Do not propose dangerous commands.
@@ -27,6 +28,7 @@ Return JSON only:
 }
 
 Use only paths from the provided project file list. Do not include secret-like, generated, dependency, or binary files.
+If the task includes previous command observations or failure output, prioritize files needed to fix those observations.
 If the task asks for instructions, operational steps, command guidance, SSH/SCP/SFTP transfer help, troubleshooting, or an explanation, and it does not explicitly ask to edit files, return an empty files_to_read array and put the answer direction in notes.
 Only include web_search_queries when current external information is genuinely useful, such as current library APIs, recent framework changes, public documentation, error messages from unknown tools, or time-sensitive implementation details.
 Do not request web searches for ordinary local edits that can be solved from the workspace."""
@@ -53,6 +55,8 @@ Rules:
 - For modify, include the full updated file content.
 - For create, include the full new file content.
 - Keep changes small and directly related to the task.
+- If previous command observations contain failures, use them to repair the issue and include a verification command when useful.
+- If the task is already complete after inspecting the current files and observations, return an empty changes array and a concise completion summary.
 - If no safe change is possible, return an empty changes array and explain in notes.
 - If the task asks for instructions, operational steps, command guidance, SSH/SCP/SFTP transfer help, troubleshooting, or an explanation, and it does not explicitly ask to edit files, return an empty changes array.
 - Do not update README, docs, scripts, or other files merely to provide instructions. Put those instructions in summary, reasoning_summary, and notes instead.

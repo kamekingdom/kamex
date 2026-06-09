@@ -23,10 +23,16 @@ def build_parser() -> argparse.ArgumentParser:
         prog="kamex",
         description="OpenAI API based CLI coding agent.",
     )
-    parser.add_argument("instruction", nargs="*", help="Natural language task to run once.")
+    parser.add_argument("instruction", nargs="*", help="Natural language task to run.")
     parser.add_argument("--workspace", "-w", help="Target workspace directory. Defaults to the current directory.")
     parser.add_argument("--model", help="Temporarily override the OpenAI model for this run.")
     parser.add_argument("--no-web-search", action="store_true", help="Disable optional OpenAI API web search.")
+    parser.add_argument(
+        "--max-turns",
+        type=int,
+        default=5,
+        help="Maximum agent turns for one task before returning to the prompt.",
+    )
     parser.add_argument("--version", action="store_true", help="Show version and exit.")
     return parser
 
@@ -50,6 +56,7 @@ def main(argv: list[str] | None = None) -> int:
         console=console,
         model_override=args.model,
         web_search_enabled=not args.no_web_search,
+        max_task_turns=args.max_turns,
     )
     if instruction:
         return agent.run_task(instruction)
