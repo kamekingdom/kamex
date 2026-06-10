@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from rich.console import Console
@@ -12,12 +12,14 @@ from rich.prompt import Confirm, Prompt
 from rich.table import Table
 from rich.text import Text
 
-from kame_agent.commands import run_user_approved_command
+from kame_agent.commands import run_command, run_user_approved_command
 from kame_agent.config import AppConfig, load_config, save_openai_api_key
+from kame_agent.context import extract_file_mentions
 from kame_agent.diffing import generate_diff
 from kame_agent.exceptions import KameAgentError, SafetyError
 from kame_agent.fs import apply_changes, read_text_file, validate_change
 from kame_agent.llm import OpenAIModelClient
+from kame_agent.memory import append_workspace_memory, read_workspace_memory
 from kame_agent.models import (
     ChangeProposal,
     CommandResult,
@@ -29,9 +31,11 @@ from kame_agent.models import (
 )
 from kame_agent.safety import command_permission_label, validate_user_approved_command
 from kame_agent.scanner import inspect_workspace
+from kame_agent.session_log import append_session_event, read_session_context
 from kame_agent.usage import append_usage_history, estimate_usage_cost, read_usage_totals
 
 DEFAULT_MAX_TASK_TURNS = 5
+DEFAULT_MAX_CONTEXT_EXPANSION_ROUNDS = 2
 COMMAND_OUTPUT_CONTEXT_CHARS = 4_000
 
 
@@ -50,12 +54,18 @@ class KameAgent:
         model_override: str | None = None,
         web_search_enabled: bool = True,
         max_task_turns: int = DEFAULT_MAX_TASK_TURNS,
+        auto_run_safe_commands: bool = True,
+        review_proposals: bool = True,
+        max_context_expansion_rounds: int = DEFAULT_MAX_CONTEXT_EXPANSION_ROUNDS,
     ) -> None:
         self.workspace = workspace
         self.console = console or Console()
         self.model_override = model_override
         self.web_search_enabled = web_search_enabled
         self.max_task_turns = max(1, max_task_turns)
+        self.auto_run_safe_commands = auto_run_safe_commands
+        self.review_proposals = review_proposals
+        self.max_context_expansion_rounds = max(0, max_context_expansion_rounds)
 
     def run_task(self, task: str) -> int:
         try:
@@ -63,6 +73,7 @@ class KameAgent:
             client = OpenAIModelClient(config)
             turn_task = task
             turn_results: list[TaskTurnResult] = []
+            append_session_event(self.workspace, "task_started", {"task": task, "model": config.model})
             for turn_number in range(1, self.max_task_turns + 1):
                 if self.max_task_turns > 1:
                     self.console.print(
@@ -70,13 +81,27 @@ class KameAgent:
                     )
                 result = self._run_task_turn(turn_task, client)
                 turn_results.append(result)
+                append_session_event(
+                    self.workspace,
+                    "turn_completed",
+                    self._session_turn_payload(turn_number, result),
+                )
                 if not self._should_continue(result):
                     break
                 if turn_number == self.max_task_turns:
                     self.console.print("[yellow]Reached max task turns before a clean stop.[/yellow]")
                     break
                 turn_task = self._build_follow_up_task(task, result)
-            self._print_summary(turn_results, client.token_usage, config.model)
+            self._print_summary(task, turn_results, client.token_usage, config.model)
+            append_session_event(
+                self.workspace,
+                "task_completed",
+                {
+                    "task": task,
+                    "turns": len(turn_results),
+                    "changed_files": self._changed_paths(turn_results),
+                },
+            )
             return 0
         except KameAgentError as exc:
             self.console.print(f"[bold red]Error:[/bold red] {exc}")
@@ -85,6 +110,11 @@ class KameAgent:
     def _run_task_turn(self, task: str, client: OpenAIModelClient) -> TaskTurnResult:
         self.console.print("[bold cyan][Agent][/bold cyan] Inspecting project...")
         inspection = inspect_workspace(self.workspace, task)
+        inspection = replace(
+            inspection,
+            workspace_memory=read_workspace_memory(inspection.workspace),
+            session_context=read_session_context(inspection.workspace),
+        )
         self._print_inspection(inspection)
 
         self.console.print("[bold cyan][Agent][/bold cyan] Planning files and web searches...")
@@ -93,11 +123,16 @@ class KameAgent:
             self.console.print(Panel(Text("\n".join(reading_plan.notes)), title="Reading Plan", border_style="blue"))
 
         self.console.print("[bold cyan][Agent][/bold cyan] Reading selected files...")
-        file_context = self._read_files(inspection, reading_plan.files_to_read)
+        mentioned_files = extract_file_mentions(task)
+        file_context = self._read_files(inspection, self._merge_files_to_read(reading_plan.files_to_read, mentioned_files))
+        file_context = self._expand_file_context(task, client, inspection, file_context)
         web_context = self._perform_web_searches(client, reading_plan.web_search_queries)
 
         self.console.print("[bold cyan][Agent][/bold cyan] Generating change proposal...")
         proposal = client.create_change_proposal(task, inspection, file_context, web_context)
+        if self.review_proposals:
+            self.console.print("[bold cyan][Agent][/bold cyan] Reviewing proposal...")
+            proposal = client.review_change_proposal(task, inspection, file_context, proposal, web_context)
         proposal = self._sanitize_proposal(inspection, proposal)
         self._print_proposal(proposal)
 
@@ -157,6 +192,34 @@ class KameAgent:
             "Inspect the updated workspace, fix any remaining issue, and return no changes when the task is complete."
         )
         return "\n".join(lines)
+
+    def _merge_files_to_read(self, planned_files: list[str], mentioned_files: list[str]) -> list[str]:
+        merged: list[str] = []
+        for path in [*mentioned_files, *planned_files]:
+            if path not in merged:
+                merged.append(path)
+        return merged
+
+    def _expand_file_context(
+        self,
+        task: str,
+        client: OpenAIModelClient,
+        inspection: ProjectInspection,
+        file_context: dict[str, str],
+    ) -> dict[str, str]:
+        context = dict(file_context)
+        for round_number in range(1, self.max_context_expansion_rounds + 1):
+            self.console.print(
+                f"[bold cyan][Agent][/bold cyan] Checking for more context ({round_number}/{self.max_context_expansion_rounds})..."
+            )
+            plan = client.create_context_expansion_plan(task, inspection, context)
+            if plan.notes:
+                self.console.print(Panel(Text("\n".join(plan.notes)), title="Context Expansion", border_style="blue"))
+            files_to_read = [path for path in plan.files_to_read if path not in context]
+            if not files_to_read:
+                break
+            context.update(self._read_files(inspection, files_to_read))
+        return context
 
     def _format_command_observation(self, result: CommandResult) -> str:
         output = f"Command: {result.command}\nExit code: {result.returncode}"
@@ -274,6 +337,12 @@ class KameAgent:
             escaped_command = escape(command)
             prompt = f"Run command: {escaped_command}"
             permission = command_permission_label(command)
+            if self.auto_run_safe_commands and permission == "inspection allowlist":
+                self.console.print("[bold cyan][Agent][/bold cyan] Auto-running safe command ", Text(command))
+                result = run_command(inspection.workspace, command)
+                self._print_command_result(result)
+                results.append(result)
+                continue
             if permission == "high-risk one-time approval":
                 prompt = f"Grant HIGH-RISK one-time permission and run command: {escaped_command}"
             elif permission != "inspection allowlist":
@@ -294,6 +363,10 @@ class KameAgent:
         table.add_row("Package manager", Text(inspection.package_manager or "unknown"))
         table.add_row("Files found", str(len(inspection.files)))
         table.add_row("Config files", Text(", ".join(inspection.config_files) or "-"))
+        table.add_row("Instruction files", Text(", ".join(inspection.project_instructions) or "-"))
+        table.add_row("Memory items", str(len(inspection.workspace_memory)))
+        table.add_row("Session context", str(len(inspection.session_context)))
+        table.add_row("Search snippets", str(len(inspection.search_snippets)))
         table.add_row("Suggested tests", Text(", ".join(inspection.test_commands) or "-"))
         self.console.print(table)
         files_to_show = inspection.files[:120]
@@ -302,6 +375,10 @@ class KameAgent:
         if remainder > 0:
             file_body += f"\n... {remainder} more files"
         self.console.print(Panel(Text(file_body), title="Inspected Files", border_style="cyan"))
+        if inspection.search_snippets:
+            self.console.print(
+                Panel(Text("\n".join(inspection.search_snippets[:20])), title="Search Snippets", border_style="blue")
+            )
         if inspection.git_status:
             self.console.print(Panel(Text(inspection.git_status), title="Git Status", border_style="blue"))
 
@@ -328,7 +405,13 @@ class KameAgent:
         style = "green" if result.returncode == 0 else "red"
         self.console.print(Panel(Text(body), title=Text(result.command), border_style=style))
 
-    def _print_summary(self, turn_results: list[TaskTurnResult], token_usage: TokenUsage, model: str) -> None:
+    def _print_summary(
+        self,
+        task: str,
+        turn_results: list[TaskTurnResult],
+        token_usage: TokenUsage,
+        model: str,
+    ) -> None:
         last_proposal = turn_results[-1].proposal if turn_results else None
         lines = [(last_proposal.summary if last_proposal else "") or "Task completed."]
         if turn_results:
@@ -346,6 +429,10 @@ class KameAgent:
         if failed_commands:
             lines.append("Last failed commands:")
             lines.extend(f"- {command.command} (exit {command.returncode})" for command in failed_commands)
+        memory_text = self._build_memory_text(task, turn_results)
+        if memory_text:
+            memory_path = append_workspace_memory(self.workspace, memory_text)
+            lines.append(f"Memory: {memory_path}")
         self.console.print(Panel(Text("\n".join(lines)), title="Final Summary", border_style="green"))
         cost = estimate_usage_cost(model, token_usage)
         history_path = append_usage_history(model, token_usage, cost, self.workspace)
@@ -372,6 +459,46 @@ class KameAgent:
         table.add_row("Estimated cost", _format_cost(cost.total_cost_usd), _format_cost(totals.total_cost_usd))
         table.add_row("History", str(history_path), "-")
         self.console.print(table)
+
+    def _build_memory_text(self, task: str, turn_results: list[TaskTurnResult]) -> str:
+        if not turn_results:
+            return ""
+        changed_paths = self._changed_paths(turn_results)
+        command_summaries = [
+            f"{command.command} exit {command.returncode}"
+            for result in turn_results
+            for command in result.command_results
+        ]
+        last_summary = turn_results[-1].proposal.summary or "Task completed."
+        lines = [
+            f"Task: {task}",
+            f"Result: {last_summary}",
+        ]
+        if changed_paths:
+            lines.append("Changed files: " + ", ".join(changed_paths))
+        if command_summaries:
+            lines.append("Verification: " + "; ".join(command_summaries[-5:]))
+        return "\n".join(lines)
+
+    def _session_turn_payload(self, turn_number: int, result: TaskTurnResult) -> dict[str, object]:
+        return {
+            "turn": turn_number,
+            "summary": result.proposal.summary,
+            "changes_applied": result.changes_applied,
+            "changed_files": [change.path for change in result.proposal.changes],
+            "commands": [
+                {
+                    "command": command.command,
+                    "returncode": command.returncode,
+                }
+                for command in result.command_results
+            ],
+        }
+
+    def _changed_paths(self, turn_results: list[TaskTurnResult]) -> list[str]:
+        return sorted(
+            {change.path for result in turn_results for change in result.proposal.changes if result.changes_applied}
+        )
 
 
 def _format_cost(value: float | None) -> str:

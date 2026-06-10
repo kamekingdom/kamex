@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from kame_agent.llm import extract_token_usage, extract_web_sources, parse_reading_plan
+from kame_agent.llm import change_proposal_to_dict, extract_token_usage, extract_web_sources, parse_reading_plan
+from kame_agent.models import ChangeProposal, PlannedChange
 
 
 def test_parse_reading_plan_supports_web_search_queries() -> None:
@@ -64,3 +65,22 @@ def test_extract_token_usage_from_prompt_completion_usage() -> None:
     assert usage.input_tokens == 5
     assert usage.output_tokens == 7
     assert usage.total_tokens == 12
+
+
+def test_change_proposal_to_dict_matches_json_shape() -> None:
+    proposal = ChangeProposal(
+        summary="Update",
+        reasoning_summary="Needed",
+        detected_project_type="python",
+        files_read=["app.py"],
+        commands_to_run=["python -m pytest"],
+        changes=[PlannedChange(path="app.py", change_type="modify", updated="print('ok')\n")],
+        notes=["note"],
+    )
+
+    data = change_proposal_to_dict(proposal)
+
+    assert data["summary"] == "Update"
+    assert data["changes"] == [
+        {"path": "app.py", "change_type": "modify", "updated": "print('ok')\n"}
+    ]

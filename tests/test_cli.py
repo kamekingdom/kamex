@@ -8,7 +8,15 @@ from pathlib import Path
 from pytest import CaptureFixture, MonkeyPatch
 from rich.console import Console
 
-from kame_agent.cli import _interactive_loop, _print_banner, main, resolve_cli_workspace
+from kame_agent.cli import (
+    _interactive_loop,
+    _print_banner,
+    build_resume_instruction,
+    main,
+    print_history,
+    resolve_cli_workspace,
+)
+from kame_agent.session_log import append_session_event
 
 
 def test_version_command(capsys: CaptureFixture[str]) -> None:
@@ -33,7 +41,10 @@ def test_help_mentions_kamex(capsys: CaptureFixture[str]) -> None:
     assert "--workspace" in captured.out
     assert "--model" in captured.out
     assert "--no-web-search" in captured.out
+    assert "--no-auto-run-safe-commands" in captured.out
+    assert "--no-review" in captured.out
     assert "--max-turns" in captured.out
+    assert "--max-context-rounds" in captured.out
 
 
 def test_default_workspace_is_current_directory(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
@@ -59,6 +70,31 @@ def test_banner_can_show_current_model(tmp_path: Path) -> None:
     rendered = output.getvalue()
     assert "Project:" in rendered
     assert "Model: gpt-test" in rendered
+
+
+def test_print_history_shows_completed_tasks(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setenv("KAMEX_CONFIG_DIR", str(tmp_path / "config"))
+    append_session_event(
+        workspace,
+        "task_completed",
+        {"task": "fix tests", "turns": 2, "changed_files": ["src/app.py"]},
+    )
+    output = StringIO()
+
+    print_history(Console(file=output), workspace)
+
+    rendered = output.getvalue()
+    assert "fix tests" in rendered
+    assert "src/app.py" in rendered
+
+
+def test_build_resume_instruction_mentions_previous_task() -> None:
+    instruction = build_resume_instruction("fix tests")
+
+    assert "Resume the most recent kamex task" in instruction
+    assert "Previous task:\nfix tests" in instruction
 
 
 def test_interactive_loop_ignores_empty_input(monkeypatch: MonkeyPatch) -> None:

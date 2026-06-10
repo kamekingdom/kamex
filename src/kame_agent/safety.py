@@ -68,18 +68,40 @@ DANGEROUS_EXACT_PREFIXES = (
 ALLOWED_COMMAND_PREFIXES = (
     ("git", "status"),
     ("git", "diff"),
+    ("git", "log"),
     ("pytest",),
     ("python", "-m", "pytest"),
     ("python3", "-m", "pytest"),
+    ("python", "-m", "unittest"),
+    ("python3", "-m", "unittest"),
     ("mypy",),
+    ("pyright",),
     ("ruff", "check"),
     ("npm", "test"),
     ("npm", "run", "test"),
     ("npm", "run", "lint"),
     ("npm", "run", "typecheck"),
+    ("npm", "run", "check"),
+    ("npm", "run", "build"),
+    ("pnpm", "test"),
+    ("pnpm", "run", "test"),
+    ("pnpm", "run", "lint"),
+    ("pnpm", "run", "typecheck"),
+    ("pnpm", "run", "check"),
+    ("pnpm", "run", "build"),
+    ("yarn", "test"),
+    ("yarn", "run", "test"),
+    ("yarn", "run", "lint"),
+    ("yarn", "run", "typecheck"),
+    ("yarn", "run", "check"),
+    ("yarn", "run", "build"),
     ("cargo", "test"),
+    ("cargo", "check"),
     ("go", "test"),
+    ("go", "vet"),
     ("make", "test"),
+    ("make", "check"),
+    ("make", "lint"),
 )
 
 SHELL_CONTROL_TOKENS = {"&&", "||", ";", "|", ">", ">>", "<", "$(", "`"}
@@ -220,4 +242,4 @@ def is_auto_allowed_command(command: str) -> bool:
     except SafetyError:
         return False
     lowered = [part.lower() for part in parts]
-    return lowered[:2] in (["git", "status"], ["git", "diff"])
+    return any(_starts_with(lowered, prefix) for prefix in ALLOWED_COMMAND_PREFIXES)

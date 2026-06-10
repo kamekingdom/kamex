@@ -110,7 +110,7 @@ export OPENAI_API_KEY="your_api_key"
 任意:
 
 ```bash
-export OPENAI_MODEL="gpt-5.2"
+export OPENAI_MODEL="gpt-5.3-codex"
 ```
 
 `OPENAI_API_KEY` が環境変数、workspaceの `.env`、カレントディレクトリの `.env`、ユーザー設定のいずれにも存在しない場合、`kamex` は最初にCLI UI上でAPIキーの入力を求めます。入力はパスワード形式で表示されず、次回以降も使えるようにユーザー設定ファイルへ保存されます。
@@ -124,12 +124,13 @@ export OPENAI_MODEL="gpt-5.2"
 workspaceの `.env` も読み込みます。ただし `.env` や鍵ファイルは LLM 入力対象から除外され、変更対象としても拒否されます。APIキー保存はアプリ専用のユーザー設定に行い、対象workspaceを勝手に変更しません。
 
 使用履歴はユーザー設定ディレクトリの `usage_history.jsonl` に保存されます。タスク完了時には現在タスクと累計のトークン数、概算費用を表示します。価格はモデルごとに変わるため、内蔵価格表にないモデルは費用を `unknown` として記録します。
+タスク要約はworkspaceごとの簡易メモリとして `memory/*.jsonl` に、ターンごとの作業記録は `sessions/*.jsonl` に保存されます。保存対象はタスク名、要約、変更ファイル、検証コマンドの終了コードなどで、ファイル全文やコマンド出力全文は保存しません。
 
 価格を上書きする場合:
 
 ```bash
-export KAMEX_PRICE_GPT_5_2_INPUT_PER_1M="1.25"
-export KAMEX_PRICE_GPT_5_2_OUTPUT_PER_1M="10.0"
+export KAMEX_PRICE_GPT_5_3_CODEX_INPUT_PER_1M="1.75"
+export KAMEX_PRICE_GPT_5_3_CODEX_OUTPUT_PER_1M="14.0"
 ```
 
 ## 使い方
@@ -163,6 +164,14 @@ kamex "READMEを現在の実装に合わせて更新して"
 
 この例では `~/projects/my-app` がworkspaceになります。
 
+明示的に読ませたいファイルがある場合は `@path` を使えます。
+
+```bash
+kamex " @src/app.py と @tests/test_app.py を見て失敗しているテストを直して"
+```
+
+`@path` で指定されたファイルは、通常のreading planより優先して読み取り対象になります。秘密情報ファイル、workspace外パス、巨大ファイル、バイナリファイルは引き続き拒否されます。
+
 workspace指定:
 
 ```bash
@@ -181,7 +190,7 @@ kamex --workspace ./sample_project
 一時的なモデル指定:
 
 ```bash
-kamex --model gpt-5.2 "READMEを改善して"
+kamex --model gpt-5.3-codex "READMEを改善して"
 ```
 
 バージョン表示:
@@ -196,6 +205,20 @@ kamex --version
 ```bash
 kamex update
 ```
+
+workspaceごとの直近履歴:
+
+```bash
+kamex history
+```
+
+直近タスクを現在のworkspace状態から再開:
+
+```bash
+kamex resume
+```
+
+`kamex resume` は直近のタスク名、簡易メモリ、セッションログ要約、現在のファイル状態を使って再開用プロンプトを作り、通常のagent loopを実行します。
 
 環境変数でも制御できます。
 
@@ -221,28 +244,66 @@ kamex --max-turns 8 "テストが通るまで修正して"
 
 kamexは、変更後に検証コマンドが失敗した場合や、変更後に検証出力がない場合、更新後のworkspaceと前ターンの観測結果をもとに次のターンへ進みます。最大ターン数に達した場合は安全側に停止して対話プロンプトへ戻ります。
 
+workspaceスキャン時には、ファイル名だけでなくタスク語句に一致する本文行も軽く検索し、関連スニペットをOpenAI APIへの文脈に含めます。これにより、ファイル名に手掛かりがない実装でもreading planに入りやすくなります。
+
+初回読み取り後に、足りない関連ファイルを追加で探す回数を変更:
+
+```bash
+kamex --max-context-rounds 3 "認証まわりの不具合を直して"
+```
+
+追加探索を止めたい場合は `--max-context-rounds 0` を指定します。
+
+allowlist内の検証コマンドは自動実行されます。従来のように毎回確認したい場合:
+
+```bash
+kamex --no-auto-run-safe-commands "テストが通るまで修正して"
+```
+
+変更案は表示前に追加のモデルレビューを通します。API呼び出し回数を減らしたい場合:
+
+```bash
+kamex --no-review "小さな修正をして"
+```
+
+プロジェクト指示ファイル:
+
+```bash
+AGENTS.md
+CLAUDE.md
+KAMEX.md
+```
+
+kamexはworkspace配下の `AGENTS.md`、`CLAUDE.md`、`KAMEX.md` を読み込み、OpenAI APIへ渡すプロジェクト文脈に含めます。これらのファイルには、コーディング規約、検証コマンド、避けるべき変更、よく使うワークフローを書けます。
+
 ## 動作フロー
 
 1. ユーザー指示を受け取る
 2. APIキーが未設定ならCLI UI上で入力を受け取り保存する
-3. 現在のworkspace配下のサブディレクトリを含めて候補ファイルを調査する
-4. 言語、パッケージマネージャ、テスト候補を推定する
-5. OpenAI APIに読むべきファイルと必要なWeb検索クエリの計画をJSONで生成させる
-6. 安全ポリシーを通過したファイルだけを読む
-7. Web検索が必要な場合、検索クエリを表示してユーザー承認後にOpenAI APIで検索する
-8. OpenAI APIに構造化された変更案JSONを生成させる
-9. アプリ側で変更案を検証してdiffを生成する
-10. CLIにdiffを表示する
-11. ユーザー承認後にのみファイルへ適用する
-12. 提案されたコマンドを表示し、安全ポリシー確認後、ユーザー承認後にのみ実行する
-13. コマンド失敗や未検証の変更があれば、観測結果を次ターンへ渡して再調査・再提案する
-14. タスクが完了したと判断したら、結果、使用トークン数、概算費用、累計使用履歴を要約する
+3. 現在のworkspace配下のサブディレクトリを含めて候補ファイルを調査し、タスク語句で本文スニペットを検索する
+4. `AGENTS.md`、`CLAUDE.md`、`KAMEX.md` などのプロジェクト指示を読み込む
+5. ユーザー指示内の `@path` 明示ファイルを抽出する
+6. 言語、パッケージマネージャ、テスト候補を推定する
+7. OpenAI APIに読むべきファイルと必要なWeb検索クエリの計画をJSONで生成させる
+8. 安全ポリシーを通過したファイルだけを読む
+9. 読み取り済みコンテキストを見直し、必要なら関連ファイルを追加で読む
+10. Web検索が必要な場合、検索クエリを表示してユーザー承認後にOpenAI APIで検索する
+11. OpenAI APIに構造化された変更案JSONを生成させる
+12. 変更案を追加のモデルレビューへ通し、安全性、読み落とし、検証不足を確認・修正する
+13. アプリ側で変更案を検証してdiffを生成する
+14. CLIにdiffを表示する
+15. ユーザー承認後にのみファイルへ適用する
+16. 提案されたコマンドを表示し、安全ポリシー確認後、allowlist内の検証コマンドは自動実行し、それ以外はユーザー承認後にのみ実行する
+17. コマンド失敗や未検証の変更があれば、観測結果を次ターンへ渡して再調査・再提案する
+18. タスクが完了したと判断したら、結果、簡易メモリ、セッションログ、使用トークン数、概算費用、累計使用履歴を要約する
 
 ## 安全設計
 
 - workspace外のパスを拒否
 - ユーザー指示が入力されるまでworkspace調査を開始しない
 - LLMへ渡す候補ファイル一覧は現在のworkspace配下から収集し、設定ファイルとユーザー指示に関係するファイルを優先表示する
+- タスク語句に一致した本文スニペットをLLM文脈に含め、本文から関連ファイルを見つけやすくする
+- `AGENTS.md`、`CLAUDE.md`、`KAMEX.md` はプロジェクト指示として読み込み、秘密情報ファイルや巨大ファイルは除外する
 - `--workspace` 未指定時のworkspaceはコマンド実行時のカレントディレクトリ
 - `--workspace` 指定時のみ指定パスをworkspaceとして使用
 - 絶対パスを拒否
@@ -255,6 +316,8 @@ kamexは、変更後に検証コマンドが失敗した場合や、変更後に
 - `--no-web-search` でWeb検索を完全に無効化可能
 - OpenAI APIレスポンスのusage情報を集計し、タスク完了時にトークン数として表示
 - 使用履歴をユーザー設定ディレクトリのJSONLへ追記
+- 簡易メモリとセッションログはユーザー設定ディレクトリへworkspace別に保存
+- `kamex resume` は保存済みログと現在のworkspaceを使って直近タスクを再開
 - モデル別価格表または環境変数から概算費用を計算
 - `modify` は既存ファイルのみ許可
 - `create` は未存在ファイルのみ許可
@@ -264,11 +327,12 @@ kamexは、変更後に検証コマンドが失敗した場合や、変更後に
 - コマンドの標準入力は閉じて実行し、入力待ちでCLIが止まらないようにする
 - コマンドが120秒を超えた場合はタイムアウト結果として表示し、対話モードへ戻る
 - shell制御演算子を拒否
-- 検査系コマンドはallowlistで通常の承認対象として表示
+- 検査系コマンドはallowlistで自動実行
+- `--no-auto-run-safe-commands` で検査系コマンドも承認制に戻せる
+- `--no-review` で追加のモデルレビューを無効化できる
 - allowlist外のコマンドは、一回限りのユーザー承認を求めてから実行
 - `rm` や `pip install` などの高リスクコマンドは、high-risk one-time approval として強調表示してから実行確認
 - LLMがshell制御演算子を含む不正なコマンドを提案した場合、ファイル変更案は継続し、そのコマンドだけをスキップしてNotesに表示
-- `git status` と `git diff` のみ自動実行
 
 高リスク承認として表示されるコマンド例:
 
@@ -285,14 +349,22 @@ git status
 git diff
 pytest
 python -m pytest
+python -m unittest
 mypy
+pyright
 ruff check
 npm test
 npm run lint
 npm run typecheck
+npm run build
+pnpm run check
+yarn run build
 cargo test
+cargo check
 go test
+go vet
 make test
+make check
 ```
 
 allowlist外でも、高リスク分類ではなくshell制御演算子を含まないものは、CLI上で「one-time user approval」として表示されます。ユーザーが明示的に承認した場合のみ、その1回だけworkspaceをcwdとして実行します。
@@ -327,7 +399,10 @@ python -m pytest
 ## 現在の制限
 
 - 1タスクの継続ターン数は `--max-turns` の上限で停止します。
-- コマンド実行とファイル適用は各ターンでユーザー承認が必要です。
+- 追加ファイル探索は `--max-context-rounds` の上限で停止します。
+- `kamex resume` はログから再開用プロンプトを作る補助機能で、完全な端末状態やLLM内部状態の復元ではありません。
+- 追加のモデルレビューは品質向上を狙うため、通常よりAPI呼び出し回数が増えます。
+- ファイル適用、allowlist外コマンド、高リスクコマンドは各ターンでユーザー承認が必要です。
 - LLM出力はJSONとして解析しますが、モデルが不正なJSONを返した場合は安全側に倒して停止します。
 - ファイル全体更新方式のため、巨大ファイルの編集は拒否します。
 - shell制御演算子を含むコマンドはユーザー承認があっても拒否します。

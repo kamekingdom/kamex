@@ -12,6 +12,7 @@ from kame_agent.fs import read_text_file
 from kame_agent.safety import (
     command_permission_label,
     ensure_readable_text_file,
+    is_auto_allowed_command,
     parse_command,
     validate_command,
     validate_user_approved_command,
@@ -76,18 +77,33 @@ def test_rejects_dangerous_commands(command: str) -> None:
         "git diff",
         "pytest",
         "python -m pytest",
+        "python -m unittest",
         "mypy src",
+        "pyright",
         "ruff check src",
         "npm test",
         "npm run lint",
         "npm run typecheck",
+        "npm run build",
+        "pnpm run check",
+        "yarn run build",
         "cargo test",
+        "cargo check",
         "go test ./...",
+        "go vet ./...",
         "make test",
+        "make check",
     ],
 )
 def test_allows_inspection_commands(command: str) -> None:
     assert validate_command(command)
+
+
+def test_auto_allowed_commands_match_inspection_allowlist() -> None:
+    assert is_auto_allowed_command("python -m pytest")
+    assert is_auto_allowed_command("npm run build")
+    assert not is_auto_allowed_command("python app.py")
+    assert not is_auto_allowed_command("rm -rf .")
 
 
 @pytest.mark.parametrize(

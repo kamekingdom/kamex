@@ -32,9 +32,20 @@ CONFIG_FILE_NAMES = {
     "ruff.toml",
 }
 
+INSTRUCTION_FILE_NAMES = {
+    "AGENTS.md",
+    "CLAUDE.md",
+    "KAMEX.md",
+}
+
 MAX_INSPECTION_FILES = 250
 MAX_VISITED_FILES = 5_000
 MAX_SCAN_DEPTH = 6
+MAX_INSTRUCTION_FILES = 20
+MAX_INSTRUCTION_FILE_BYTES = 64_000
+MAX_SEARCH_SNIPPETS = 40
+MAX_SEARCH_SNIPPETS_PER_FILE = 2
+MAX_SEARCH_LINE_CHARS = 220
 
 TASK_KEYWORD_SUFFIXES = {
     "python": {".py", ".toml", ".txt", ".md"},
@@ -61,8 +72,11 @@ def inspect_workspace(workspace: Path, task: str | None = None) -> ProjectInspec
     root = normalize_workspace(workspace)
     candidates: list[tuple[int, str]] = []
     config_files: list[str] = []
+    project_instructions: dict[str, str] = {}
+    search_snippets: list[str] = []
     visited_files = 0
     task_terms = task_keywords(task or "")
+    content_terms = content_search_terms(task or "")
     for current_root, dir_names, file_names in os.walk(root):
         dir_names[:] = [name for name in dir_names if name not in EXCLUDED_DIRS]
         current = Path(current_root)
@@ -91,7 +105,14 @@ def inspect_workspace(workspace: Path, task: str | None = None) -> ProjectInspec
                 continue
             if size > 512_000 or is_binary_file(path):
                 continue
-            priority = file_priority(rel_str, is_config, task_terms)
+            if file_name in INSTRUCTION_FILE_NAMES and len(project_instructions) < MAX_INSTRUCTION_FILES:
+                instruction = read_instruction_file(path, size)
+                if instruction:
+                    project_instructions[rel_str] = instruction
+            snippets = find_content_snippets(path, rel_str, content_terms)
+            if snippets and len(search_snippets) < MAX_SEARCH_SNIPPETS:
+                search_snippets.extend(snippets[: MAX_SEARCH_SNIPPETS - len(search_snippets)])
+            priority = file_priority(rel_str, is_config, task_terms, has_content_match=bool(snippets))
             candidates.append((priority, rel_str))
             if is_config:
                 config_files.append(rel_str)
@@ -110,15 +131,78 @@ def inspect_workspace(workspace: Path, task: str | None = None) -> ProjectInspec
         test_commands=test_commands,
         git_status=git_status.stdout.strip() if git_status else None,
         git_diff=git_diff.stdout.strip() if git_diff else None,
+        project_instructions=dict(sorted(project_instructions.items())),
+        search_snippets=search_snippets,
     )
 
 
-def file_priority(relative_path: str, is_config: bool, terms: set[str]) -> int:
-    if is_config:
+def read_instruction_file(path: Path, size: int) -> str:
+    if size > MAX_INSTRUCTION_FILE_BYTES:
+        return ""
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def file_priority(relative_path: str, is_config: bool, terms: set[str], has_content_match: bool = False) -> int:
+    if Path(relative_path).name in INSTRUCTION_FILE_NAMES:
         return 0
-    if is_task_relevant_file(relative_path, terms):
+    if is_config:
         return 1
-    return 2
+    if has_content_match or is_task_relevant_file(relative_path, terms):
+        return 2
+    return 3
+
+
+def content_search_terms(task: str) -> list[str]:
+    stop_words = {
+        "please",
+        "update",
+        "change",
+        "fix",
+        "create",
+        "make",
+        "this",
+        "that",
+        "with",
+        "from",
+        "して",
+        "ください",
+        "この",
+        "その",
+    }
+    terms: list[str] = []
+    for word in _split_words(task.lower()):
+        if len(word) < 3 or word in stop_words:
+            continue
+        if word not in terms:
+            terms.append(word)
+        if len(terms) >= 12:
+            break
+    return terms
+
+
+def find_content_snippets(path: Path, relative_path: str, terms: list[str]) -> list[str]:
+    if not terms:
+        return []
+    snippets: list[str] = []
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+    lowered_terms = [term.lower() for term in terms]
+    for line_number, line in enumerate(lines, start=1):
+        lowered = line.lower()
+        if not any(term in lowered for term in lowered_terms):
+            continue
+        snippet = line.strip()
+        if len(snippet) > MAX_SEARCH_LINE_CHARS:
+            snippet = snippet[:MAX_SEARCH_LINE_CHARS].rstrip() + "..."
+        snippets.append(f"{relative_path}:{line_number}: {snippet}")
+        if len(snippets) >= MAX_SEARCH_SNIPPETS_PER_FILE:
+            break
+    return snippets
 
 
 def task_keywords(task: str) -> set[str]:

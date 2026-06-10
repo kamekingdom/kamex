@@ -17,6 +17,10 @@ USAGE_HISTORY_FILE_NAME = "usage_history.jsonl"
 # KAMEX_PRICE_<MODEL>_INPUT_PER_1M / KAMEX_PRICE_<MODEL>_OUTPUT_PER_1M
 # where non-alphanumeric model chars become underscores and uppercase.
 DEFAULT_PRICE_TABLE_USD_PER_1M: dict[str, tuple[float, float]] = {
+    "gpt-5.3-codex": (1.75, 14.0),
+    "gpt-5.2-codex": (1.75, 14.0),
+    "gpt-5.1-codex": (1.25, 10.0),
+    "gpt-5-codex": (1.25, 10.0),
     "gpt-5.2": (1.25, 10.0),
     "gpt-5.1": (1.25, 10.0),
     "gpt-5": (1.25, 10.0),

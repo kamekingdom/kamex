@@ -6,7 +6,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-DEFAULT_MODEL = "gpt-5.2"
+DEFAULT_MODEL = "gpt-5.3-codex"
 USER_CONFIG_DIR_ENV = "KAMEX_CONFIG_DIR"
 USER_CONFIG_FILE_NAME = ".env"
 

@@ -26,6 +26,10 @@ class ProjectInspection:
     test_commands: list[str]
     git_status: str | None = None
     git_diff: str | None = None
+    project_instructions: dict[str, str] = field(default_factory=dict)
+    workspace_memory: list[str] = field(default_factory=list)
+    session_context: list[str] = field(default_factory=list)
+    search_snippets: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

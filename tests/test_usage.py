@@ -19,11 +19,11 @@ from kame_agent.usage import (
 def test_estimate_usage_cost_known_model() -> None:
     usage = TokenUsage(input_tokens=1_000_000, output_tokens=500_000, total_tokens=1_500_000)
 
-    cost = estimate_usage_cost("gpt-5.2", usage)
+    cost = estimate_usage_cost("gpt-5.3-codex", usage)
 
-    assert cost.input_cost_usd == 1.25
-    assert cost.output_cost_usd == 5.0
-    assert cost.total_cost_usd == 6.25
+    assert cost.input_cost_usd == 1.75
+    assert cost.output_cost_usd == 7.0
+    assert cost.total_cost_usd == 8.75
 
 
 def test_estimate_usage_cost_unknown_model() -> None:

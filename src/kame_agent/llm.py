@@ -8,6 +8,7 @@ from typing import Any, cast
 from openai import OpenAI, OpenAIError
 
 from kame_agent.config import AppConfig
+from kame_agent.context import extract_file_mentions
 from kame_agent.exceptions import LLMError, ProposalError
 from kame_agent.models import (
     ChangeProposal,
@@ -19,7 +20,14 @@ from kame_agent.models import (
     WebSearchResult,
     add_token_usage,
 )
-from kame_agent.prompts import PROPOSAL_PROMPT, READING_PLAN_PROMPT, SYSTEM_PROMPT, WEB_SEARCH_PROMPT
+from kame_agent.prompts import (
+    CONTEXT_EXPANSION_PROMPT,
+    PROPOSAL_PROMPT,
+    READING_PLAN_PROMPT,
+    REVIEW_PROMPT,
+    SYSTEM_PROMPT,
+    WEB_SEARCH_PROMPT,
+)
 
 
 class OpenAIModelClient:
@@ -42,9 +50,14 @@ class OpenAIModelClient:
             "package_manager": inspection.package_manager,
             "test_commands": inspection.test_commands,
             "config_files": inspection.config_files,
+            "project_instructions": inspection.project_instructions,
             "files": inspection.files,
             "git_status": inspection.git_status,
             "git_diff": inspection.git_diff,
+            "workspace_memory": inspection.workspace_memory,
+            "session_context": inspection.session_context,
+            "search_snippets": inspection.search_snippets,
+            "mentioned_files": extract_file_mentions(task),
         }
         data = self._request_json(READING_PLAN_PROMPT, payload)
         plan = parse_reading_plan(data)
@@ -86,9 +99,13 @@ class OpenAIModelClient:
                 "package_manager": inspection.package_manager,
                 "test_commands": inspection.test_commands,
                 "config_files": inspection.config_files,
+                "project_instructions": inspection.project_instructions,
                 "files": inspection.files,
                 "git_status": inspection.git_status,
                 "git_diff": inspection.git_diff,
+                "workspace_memory": inspection.workspace_memory,
+                "session_context": inspection.session_context,
+                "search_snippets": inspection.search_snippets,
             },
             "files": file_context,
             "web_search_results": [
@@ -97,6 +114,74 @@ class OpenAIModelClient:
             ],
         }
         data = self._request_json(PROPOSAL_PROMPT, payload)
+        return parse_change_proposal(data)
+
+    def create_context_expansion_plan(
+        self,
+        task: str,
+        inspection: ProjectInspection,
+        file_context: dict[str, str],
+    ) -> ReadingPlan:
+        payload = {
+            "task": task,
+            "workspace": str(inspection.workspace),
+            "detected_project_type": inspection.detected_project_type,
+            "package_manager": inspection.package_manager,
+            "test_commands": inspection.test_commands,
+            "config_files": inspection.config_files,
+            "project_instructions": inspection.project_instructions,
+            "files": inspection.files,
+            "files_read": sorted(file_context),
+            "file_context": file_context,
+            "git_status": inspection.git_status,
+            "git_diff": inspection.git_diff,
+            "workspace_memory": inspection.workspace_memory,
+            "session_context": inspection.session_context,
+            "search_snippets": inspection.search_snippets,
+        }
+        data = self._request_json(CONTEXT_EXPANSION_PROMPT, payload)
+        plan = parse_reading_plan(data)
+        unknown = [path for path in plan.files_to_read if path not in inspection.files]
+        if unknown:
+            raise ProposalError(f"Context expansion included unknown files: {', '.join(unknown)}")
+        already_read = [path for path in plan.files_to_read if path in file_context]
+        if already_read:
+            raise ProposalError(f"Context expansion repeated already-read files: {', '.join(already_read)}")
+        return ReadingPlan(files_to_read=plan.files_to_read, web_search_queries=[], notes=plan.notes)
+
+    def review_change_proposal(
+        self,
+        task: str,
+        inspection: ProjectInspection,
+        file_context: dict[str, str],
+        proposal: ChangeProposal,
+        web_context: list[WebSearchResult] | None = None,
+    ) -> ChangeProposal:
+        web_results = web_context or []
+        payload = {
+            "task": task,
+            "inspection": {
+                "workspace": str(inspection.workspace),
+                "detected_project_type": inspection.detected_project_type,
+                "package_manager": inspection.package_manager,
+                "test_commands": inspection.test_commands,
+                "config_files": inspection.config_files,
+                "project_instructions": inspection.project_instructions,
+                "files": inspection.files,
+                "git_status": inspection.git_status,
+                "git_diff": inspection.git_diff,
+                "workspace_memory": inspection.workspace_memory,
+                "session_context": inspection.session_context,
+                "search_snippets": inspection.search_snippets,
+            },
+            "files": file_context,
+            "web_search_results": [
+                {"query": result.query, "summary": result.summary, "sources": result.sources}
+                for result in web_results
+            ],
+            "proposal": change_proposal_to_dict(proposal),
+        }
+        data = self._request_json(REVIEW_PROMPT, payload)
         return parse_change_proposal(data)
 
     def _request_json(self, prompt: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -257,6 +342,25 @@ def parse_change_proposal(data: dict[str, Any]) -> ChangeProposal:
         changes=changes,
         notes=_string_list(data.get("notes", [])),
     )
+
+
+def change_proposal_to_dict(proposal: ChangeProposal) -> dict[str, Any]:
+    return {
+        "summary": proposal.summary,
+        "reasoning_summary": proposal.reasoning_summary,
+        "detected_project_type": proposal.detected_project_type,
+        "files_read": proposal.files_read,
+        "commands_to_run": proposal.commands_to_run,
+        "changes": [
+            {
+                "path": change.path,
+                "change_type": change.change_type,
+                "updated": change.updated,
+            }
+            for change in proposal.changes
+        ],
+        "notes": proposal.notes,
+    }
 
 
 def _string_list(value: Any) -> list[str]:
